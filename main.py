@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
 import logging
+import tempfile
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -13,6 +14,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain.memory import ConversationBufferWindowMemory
 from langchain_core.messages import HumanMessage, AIMessage
 from supabase import create_client, Client
+
+from ingest_documents import DocumentIngestion
 
 load_dotenv()
 
@@ -69,6 +72,9 @@ def get_or_create_memory(conversation_id: str) -> ConversationBufferWindowMemory
         )
     return conversation_memories[conversation_id]
 
+# Initialize document ingestion handler
+ingestion_handler = DocumentIngestion()
+
 # Request/Response models
 class ChatMessage(BaseModel):
     role: str
@@ -92,6 +98,20 @@ class ChatResponse(BaseModel):
     sources: List[Source]
     confidence: str
 
+class IngestionResponse(BaseModel):
+    success: bool
+    message: str
+    chunks_created: Optional[int] = None
+    chunks_stored: Optional[int] = None
+    document_ids: Optional[List[int]] = None
+    error: Optional[str] = None
+
+class TextIngestionRequest(BaseModel):
+    text: str
+    title: Optional[str] = None
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+
 
 # Conversational Assistant Prompt (when no context needed)
 CHAT_PROMPT = """# IDENTITY & PERSONA
@@ -111,22 +131,49 @@ As an integral part of the Ready Artwork team working on MeeFog:
 - Keep responses brief and professional
 - Always redirect to your core purpose
 
-# HOW TO RESPOND
+# RESPONSE PRINCIPLES
 
-**For greetings (hello, hi, hey):**
-"Hi! I'm Archie, your MeeFog knowledge assistant. I can help you find information from MeeFog documents and meeting transcripts. What would you like to know?"
+## Be Natural and Varied
+- Never use the exact same phrasing twice in a row
+- Generate authentic responses based on context
+- Adapt your tone to match the user (while staying professional)
+- Keep it conversational but purposeful
 
-**For questions about yourself:**
-"I'm Archie, a specialized assistant for accessing MeeFog client information. I can search through documents, meeting transcripts, and help you find specific information about the MeeFog account. What can I help you find?"
+## Handling Different Situations
 
-**For thanks:**
-"You're welcome! Let me know if you need anything else from the MeeFog knowledge base."
+**When users greet you:**
+Respond warmly and naturally while clarifying your purpose. Vary your greetings:
+- Sometimes be brief and direct
+- Sometimes be slightly more welcoming
+- Always make it easy for them to ask their question
+- Never sound robotic or templated
 
-**For off-topic requests (stories, jokes, general chat):**
-"I'm specifically designed to help with MeeFog information retrieval. I can search documents, meeting transcripts, and answer questions about the MeeFog account. What would you like to know about MeeFog?"
+**When asked about yourself:**
+Explain your role clearly but naturally. Focus on:
+- What you can do for them
+- Your access to Mountain Top documentation
+- How you can help them find information
+- Keep it conversational, not scripted
 
-**For unrelated questions:**
-"I'm focused on MeeFog-related information only. I can help you find documents, meeting notes, decisions, or any other information from our MeeFog knowledge base. What would you like to search for?"
+**When users thank you:**
+Acknowledge graciously and keep the door open:
+- Be warm but brief
+- Offer continued assistance
+- Don't over-explain
+- Vary your acknowledgments
+
+**When requests are off-topic:**
+Politely but firmly redirect without being rigid:
+- Acknowledge their request briefly
+- Explain your specialization naturally
+- Guide them back to Mountain Top topics
+- Stay helpful in tone while maintaining boundaries
+
+## Quality Guidelines
+- **Conciseness**: Be brief unless detail is genuinely needed
+- **Clarity**: Make your purpose and capabilities obvious
+- **Consistency**: Always redirect off-topic requests, but do it naturally
+- **Professionalism**: Sound like a knowledgeable colleague, not a script
 
 # CONVERSATION HISTORY
 {chat_history}
@@ -134,7 +181,7 @@ As an integral part of the Ready Artwork team working on MeeFog:
 # CURRENT USER MESSAGE
 {query}
 
-Your response (stay focused on MeeFog retrieval purpose):"""
+Generate a natural, unique response appropriate to this specific interaction:"""
 
 # Knowledge Base Search Prompt (when context is provided)
 KNOWLEDGE_PROMPT = """# IDENTITY & PERSONA
@@ -256,6 +303,27 @@ Do not start resopnse with "Main Answer....."
 - Context-aware: front-load the answer, then provide sources
 - Helpful & collaborative: suggest connections between information
 - **Format everything with proper markdown for visual clarity**
+
+# RESPONSE LENGTH CONTROL
+Main Answer
+
+Maximum 3-4 sentences for the primary answer
+Only include essential details (avoid background unless asked)
+Use bullet points ONLY for listing 3+ distinct items
+For simple questions, answer in 1-2 sentences
+
+Source Citations
+
+Maximum 2 sources for simple questions, 3 for complex ones
+Excerpts: 1 sentence only (not multiple sentences)
+Remove "Additional Info" field entirely
+Combine format: [Source Name] - Type | Date | Link
+
+Formatting
+
+Skip the closing offer ("If you'd like, I can provide more...")
+No repetition of information between answer and sources
+Remove explanatory phrases like "Key Features of X:" - just list them
 
 # CONVERSATION HISTORY
 {chat_history}
@@ -443,13 +511,24 @@ Content: {content}
         content = meeting.get("content", "")
         metadata = meeting.get("metadata") or {}
         
-        name = (metadata.get("meeting_title") or 
+        # Check both direct fields and metadata for meeting info
+        name = (meeting.get("meeting_title") or 
+                metadata.get("meeting_title") or 
                 metadata.get("title") or
                 f"Meeting #{meeting.get('id', '')}")
         
-        date = metadata.get("meeting_date") or metadata.get("date") or ""
-        url = metadata.get("meeting_url") or metadata.get("url") or metadata.get("transcript_url") or ""
-        participants = metadata.get("participants") or metadata.get("speakers") or ""
+        date = (meeting.get("meeting_date") or 
+                metadata.get("meeting_date") or 
+                metadata.get("date") or "")
+        
+        url = (meeting.get("meeting_url") or 
+               metadata.get("meeting_url") or 
+               metadata.get("url") or 
+               metadata.get("transcript_url") or "")
+        
+        participants = (meeting.get("speakers") or 
+                       metadata.get("participants") or 
+                       metadata.get("speakers") or "")
         
         context_parts.append(f"""
 Source: {name}
@@ -658,6 +737,167 @@ async def search_meets(q: str, limit: int = 10):
     """Search meetings endpoint"""
     _, meetings = search_both(q, limit)
     return {"results": meetings}
+
+@app.post("/api/upload", response_model=IngestionResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None)
+):
+    """
+    Upload and ingest a document file
+    
+    Supported formats: .txt, .pdf, .docx, .doc, .md
+    """
+    logger.info(f"[API] Received file upload: {file.filename}")
+    
+    # Check file extension
+    supported_extensions = ['.txt', '.pdf', '.docx', '.doc', '.md']
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    
+    if file_ext not in supported_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Supported: {', '.join(supported_extensions)}"
+        )
+    
+    # Save uploaded file temporarily
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file_path = tmp_file.name
+        
+        # Prepare metadata
+        metadata = {
+            "filename": file.filename,
+            "file_type": file_ext,
+            "upload_date": datetime.now().isoformat()
+        }
+        if title:
+            metadata["title"] = title
+        if category:
+            metadata["category"] = category
+        if tags:
+            metadata["tags"] = tags.split(",")
+        
+        # Ingest the file
+        result = ingestion_handler.ingest_file(tmp_file_path, metadata)
+        
+        # Clean up temp file
+        os.unlink(tmp_file_path)
+        
+        if result.get("success"):
+            return IngestionResponse(
+                success=True,
+                message=f"Successfully ingested {file.filename}",
+                chunks_created=result.get("chunks_created"),
+                chunks_stored=result.get("chunks_stored"),
+                document_ids=result.get("document_ids")
+            )
+        else:
+            return IngestionResponse(
+                success=False,
+                message=f"Failed to ingest {file.filename}",
+                error=result.get("error")
+            )
+    
+    except Exception as e:
+        logger.error(f"[API] Error processing upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/upload/text", response_model=IngestionResponse)
+async def upload_text(request: TextIngestionRequest):
+    """
+    Ingest raw text directly
+    """
+    logger.info(f"[API] Received text ingestion request ({len(request.text)} chars)")
+    
+    try:
+        # Prepare metadata
+        metadata = {
+            "upload_date": datetime.now().isoformat()
+        }
+        if request.title:
+            metadata["title"] = request.title
+        if request.category:
+            metadata["category"] = request.category
+        if request.tags:
+            metadata["tags"] = request.tags
+        
+        # Ingest the text
+        result = ingestion_handler.ingest_text(request.text, metadata)
+        
+        if result.get("success"):
+            return IngestionResponse(
+                success=True,
+                message="Successfully ingested text",
+                chunks_created=result.get("chunks_created"),
+                chunks_stored=result.get("chunks_stored"),
+                document_ids=result.get("document_ids")
+            )
+        else:
+            return IngestionResponse(
+                success=False,
+                message="Failed to ingest text",
+                error=result.get("error")
+            )
+    
+    except Exception as e:
+        logger.error(f"[API] Error processing text: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/documents/list")
+async def list_documents(
+    limit: int = 50,
+    offset: int = 0,
+    category: Optional[str] = None
+):
+    """
+    List all documents in the database
+    """
+    try:
+        table_name = os.getenv("SUPABASE_TABLE_NAME", "meefog_documents")
+        query = supabase.table(table_name).select("id, metadata, created_at")
+        
+        if category:
+            query = query.eq("metadata->>category", category)
+        
+        query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
+        
+        result = query.execute()
+        
+        return {
+            "success": True,
+            "documents": result.data,
+            "count": len(result.data)
+        }
+    
+    except Exception as e:
+        logger.error(f"[API] Error listing documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document(document_id: int):
+    """
+    Delete a document by ID
+    """
+    try:
+        table_name = os.getenv("SUPABASE_TABLE_NAME", "meefog_documents")
+        result = supabase.table(table_name).delete().eq("id", document_id).execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "message": f"Deleted document {document_id}"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Document not found")
+    
+    except Exception as e:
+        logger.error(f"[API] Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
