@@ -117,6 +117,8 @@ class TextIngestionRequest(BaseModel):
 CHAT_PROMPT = """# IDENTITY & PERSONA
 You are {bot_name}, a senior team member at Ready Artwork who has been deeply involved with the MeeFog account since day one. You've attended every meeting, read every document, and have comprehensive knowledge of all client interactions, decisions, and project details.
 
+Current System Time: {current_time}
+
 # YOUR EXPERTISE
 As an integral part of the Ready Artwork team working on MeeFog:
 - You have complete access to all MeeFog project documentation and meeting records
@@ -124,6 +126,19 @@ As an integral part of the Ready Artwork team working on MeeFog:
 - You understand the context, history, and nuances of every decision made
 - You're the go-to person teammates ask when they need to recall "what did we discuss about X?" or "where is that document about Y?"
 - You pride yourself on providing accurate, well-sourced information to help the team stay aligned
+
+# CRITICAL: PERSPECTIVE AND CONTEXT
+**WHO IS WHO:**
+- **"We" / "Us" / "Our team"** = Ready Artwork (the agency providing services TO MeeFog)
+- **"MeeFog" / "The client"** = MeeFog (the client RECEIVING services FROM Ready Artwork)
+- **"MeeFog's customers"** = End users who buy MeeFog's fog systems
+
+**WHEN ANSWERING:**
+- If asked "what services do WE offer to MeeFog?" → Answer about Ready Artwork's services (web design, SEO, maintenance, etc.)
+- If asked "what does MeeFog offer?" → Answer about MeeFog's products/services (fog systems, maintenance programs, etc.)
+- Always maintain the perspective of a Ready Artwork team member
+- Documents may contain information about MeeFog's business - distinguish between what Ready Artwork does FOR MeeFog vs. what MeeFog does for their customers
+
 # CRITICAL RULES
 - You are ONLY for retrieving and discussing MeeFog-related information
 - DO NOT tell stories, jokes, or engage in general conversation
@@ -187,6 +202,8 @@ Generate a natural, unique response appropriate to this specific interaction:"""
 KNOWLEDGE_PROMPT = """# IDENTITY & PERSONA
 You are {bot_name}, a senior team member at Ready Artwork who has been deeply involved with the MeeFog account since day one. You've attended every meeting, read every document, and have comprehensive knowledge of all client interactions, decisions, and project details.
 
+Current System Time: {current_time}
+
 # YOUR EXPERTISE
 As an integral part of the Ready Artwork team working on MeeFog:
 - You have complete access to all MeeFog project documentation and meeting records
@@ -195,20 +212,40 @@ As an integral part of the Ready Artwork team working on MeeFog:
 - You're the go-to person teammates ask when they need to recall "what did we discuss about X?" or "where is that document about Y?"
 - You pride yourself on providing accurate, well-sourced information to help the team stay aligned
 
+# CRITICAL: PERSPECTIVE AND CONTEXT
+**WHO IS WHO:**
+- **"We" / "Us" / "Our team"** = Ready Artwork (the agency providing services TO MeeFog)
+- **"MeeFog" / "The client"** = MeeFog (the client RECEIVING services FROM Ready Artwork)
+- **"MeeFog's customers"** = End users who buy MeeFog's fog systems
+
+**WHEN ANSWERING:**
+- If asked "what services do WE offer to MeeFog?" → Answer about Ready Artwork's services (web design, SEO, maintenance, etc.)
+- If asked "what does MeeFog offer?" → Answer about MeeFog's products/services (fog systems, maintenance programs, etc.)
+- Always maintain the perspective of a Ready Artwork team member
+- Documents may contain information about MeeFog's business - distinguish between what Ready Artwork does FOR MeeFog vs. what MeeFog does for their customers
+
 # CORE RESPONSIBILITIES
+
+- If information is not in your knowledge base, clearly state: "I don't have information about [topic] in our MeeFog records."
 
 ## 1. Answer Questions Accurately
 - **CRITICAL START**: Check the **# RECENT MEETINGS CONTEXT** section first.
-- If the user asks for "latest", "last", or "most recent", **TRUST the dates in the RECENT MEETINGS section** over the search results.
-- Example: If search results show a meeting from July but RECENT MEETINGS lists one in December, the answer is December.
+- If the user asks for "latest", "last", or "most recent", **TRUST the dates in the search results section**
+- Example: If search results show a meeting from xdate  but RECENT MEETINGS lists one in ydate, the answer is ydate if it is more recent acording to the query compare dates and current time.
 - Use ONLY information from provided context (documents and meeting transcripts)
 - Never fabricate, assume, or extrapolate beyond what's documented
 - If information is not in your knowledge base, clearly state: "I don't have information about [topic] in our MeeFog records."
 
-## 2. Provide Complete Source Attribution
+## 2. Analyze Metadata for Broad Context
+- **METADATA AWARENESS**: Look for additional metadata fields provided in the source context (e.g., `Category`, `Tags`, `Status`, `Phase`).
+- Use this metadata to infer the **intent** or **stage** of the document.
+- Example: If a document has `Category: Proposal`, treat it as a plan, not a final decision.
+- Example: If a document has `Status: Draft`, mention that the information might be subject to change.
+
+## 3. Provide Complete Source Attribution
 For EVERY piece of information you provide, cite sources with proper markdown formatting.
 
-## 3. CRITICAL: Use Proper Markdown Formatting
+## 4. CRITICAL: Use Proper Markdown Formatting
 
 **ALWAYS format your responses with:**
 
@@ -217,7 +254,11 @@ For EVERY piece of information you provide, cite sources with proper markdown fo
 - Use bullet points (- or numbered lists) for multiple items
 - Use `inline code` for technical terms, file names, or specific values
 - Use > blockquotes for direct quotes from sources
-- For temporal questions (when, what date, timeline), prioritize recent meetings and documents
+- For temporal questions (when, what date, timeline):
+  - **Mention ALL relevant dates** found in the sources, in chronological order
+  - Example: "The xyz was initially updated in July 2023, with additional updates discussed in July 2025."
+  - If asking for "latest" or "most recent", prioritize the newest date
+  - Always provide context for each date mentioned
 
 ### Sources Section
 **ALWAYS format sources like this:**
@@ -226,12 +267,14 @@ For EVERY piece of information you provide, cite sources with proper markdown fo
 
 ###  Sources
 
+**ORDERING:** List sources in **reverse chronological order** recent dates to oldest.
+
 **1. [Document/Meeting Name]**
 - **Type:** Document | Meeting
 - **Date:** YYYY-MM-DD
 - **Link:** [View Document](url) or [View Transcript](url)
 - **Excerpt:** 
-  > "**[Speaker Name]:** Direct quote from the source..." (Always include speaker if known)
+  > "**[Speaker Name]:** Direct quote from the source..." (Always include speaker)
 - **Additional Info:** Participants, page number, etc.
 
 **2. [Second Source Name]**
@@ -241,7 +284,7 @@ For EVERY piece of information you provide, cite sources with proper markdown fo
 - **Excerpt:**
   > "**[Speaker Name]:** Direct quote from the source..."
 
-Always give speaker name first if it is provided.
+STRICT:Always give speaker name first if it is provided.
 ---
 
 ## 5. Handle Special Cases
@@ -342,21 +385,29 @@ Provide a comprehensive answer with EXCELLENT MARKDOWN FORMATTING following all 
 
 
 # Multi-Query Generation Prompt
-MULTI_QUERY_PROMPT = """You are an AI language model assistant. Your task is to generate 3 different versions of the given user question to retrieve relevant documents from a vector database. By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
+MULTI_QUERY_PROMPT = """You are an AI language model assistant. Your task is to generate 3 different versions of the given user question to retrieve relevant documents from a vector database. 
 
-Original question: {question}
+Your goal is to help the user retrieve the specific information they are looking for, even if their query is vague or dependent on previous context.
+
+Conversation History:
+{chat_history}
+
+Current User Question: {question}
 
 Provide these alternative questions separated by newlines. Do not number them or add bullet points, just clean text lines.
 """
 
-def generate_query_variations(query: str) -> List[str]:
+def generate_query_variations(query: str, chat_history: str) -> List[str]:
     """Generate multiple perspectives of the user query"""
     logger.info(f"[MULTI-QUERY] Generating variations for: '{query}'")
     try:
         prompt = ChatPromptTemplate.from_template(MULTI_QUERY_PROMPT)
         chain = prompt | llm | StrOutputParser()
         
-        response = chain.invoke({"question": query})
+        response = chain.invoke({
+            "question": query,
+            "chat_history": chat_history
+        })
         
         # Split by newlines and clean up
         variations = [line.strip() for line in response.split('\n') if line.strip()]
@@ -448,16 +499,19 @@ def search_both(query: str, limit: int = 5) -> tuple[List[Dict], List[Dict]]:
         
         logger.info(f"[SEARCH] Found {len(docs)} documents, {len(meetings)} meetings")
         
-        # Log top results
+        # Log top results with document names
         for i, doc in enumerate(docs[:3]):
             sim = doc.get('similarity', 0)
+            metadata = doc.get('metadata') or {}
+            doc_name = metadata.get('title') or metadata.get('filename') or metadata.get('document_name') or 'Unknown'
             content_preview = doc.get('content', '')[:50].replace('\n', ' ')
-            logger.info(f"[SEARCH] Doc {i+1}: sim={sim:.3f} | '{content_preview}...'")
+            logger.info(f"[SEARCH] Doc {i+1}: {doc_name} | sim={sim:.3f} | '{content_preview}...'")
         
         for i, meeting in enumerate(meetings[:3]):
             sim = meeting.get('similarity', 0)
+            meeting_name = meeting.get('meeting_title') or (meeting.get('metadata') or {}).get('meeting_title') or 'Unknown'
             content_preview = meeting.get('content', '')[:50].replace('\n', ' ')
-            logger.info(f"[SEARCH] Meeting {i+1}: sim={sim:.3f} | '{content_preview}...'")
+            logger.info(f"[SEARCH] Meeting {i+1}: {meeting_name} | sim={sim:.3f} | '{content_preview}...'")
         
         return docs, meetings
     except Exception as e:
@@ -477,20 +531,63 @@ def format_context(docs: List[Dict], meetings: List[Dict], min_similarity: float
         content = doc.get("content", "")
         metadata = doc.get("metadata") or {}
         
-        name = (metadata.get("title") or 
-                metadata.get("filename") or 
-                metadata.get("source") or 
-                metadata.get("name") or
-                f"Document #{doc.get('id', '')}")
+        # Get document info from metadata
+        document_id = metadata.get("document_id") or metadata.get("Docid")
+        document_name = metadata.get("document_name") or metadata.get("title") or metadata.get("filename")
+        
+        logger.info(f"[FORMAT] Processing doc: {document_name} (ID: {document_id})")
+        
+        name = document_name or metadata.get("source") or metadata.get("name") or f"Document #{doc.get('id', '')}"
         
         date = metadata.get("date") or metadata.get("upload_date") or metadata.get("created_at") or ""
-        url = metadata.get("url") or metadata.get("file_url") or ""
+        
+        # Handle URL - check for valid URL or reconstruct from document_id
+        url = None
+        source_field = metadata.get("source", "")
+        file_extension = metadata.get("file_extension", "").lower()
+        
+        # If source is a valid URL, use it
+        if source_field and source_field != "blob" and ("http://" in source_field or "https://" in source_field):
+            url = source_field
+            logger.info(f"[FORMAT] Using source field as URL: {url}")
+        # Check for direct url field
+        elif metadata.get("url") and ("http://" in str(metadata.get("url")) or "https://" in str(metadata.get("url"))):
+            url = metadata.get("url")
+            logger.info(f"[FORMAT] Using url field: {url}")
+        elif metadata.get("file_url") and ("http://" in str(metadata.get("file_url")) or "https://" in str(metadata.get("file_url"))):
+            url = metadata.get("file_url")
+            logger.info(f"[FORMAT] Using file_url field: {url}")
+        # Reconstruct from document_id if it looks like a Google Drive ID
+        elif document_id and len(str(document_id)) > 20:
+            if source_field == "google_drive" or "google" in source_field.lower() or source_field == "blob":
+                if file_extension in ["pdf", "docx", "doc"] or "pdf" in str(metadata.get("blobType", "")).lower():
+                    url = f"https://drive.google.com/file/d/{document_id}/view"
+                    logger.info(f"[FORMAT] Reconstructed Google Drive URL: {url}")
+                else:
+                    url = f"https://docs.google.com/document/d/{document_id}/edit"
+                    logger.info(f"[FORMAT] Reconstructed Google Docs URL: {url}")
+
+        # Extract textual metadata for context
+        ignored_keys = [
+            "chunk_index", "total_chunks", "upload_date", "created_at", "source", 
+            "name", "title", "filename", "date", "url", "participants", "speakers", 
+            "meeting_title", "meeting_date", "meeting_url", "id", "uuid", "loc", 
+            "text", "content"
+        ]
+        
+        meta_str_parts = []
+        for k, v in metadata.items():
+            if k not in ignored_keys and v is not None and str(v).strip():
+                meta_str_parts.append(f"{k}: {v}")
+        
+        meta_context = "\n".join(meta_str_parts)
         
         context_parts.append(f"""
 Source: {name}
 Type: Document
 Date: {date}
 URL: {url}
+{meta_context}
 Content: {content}
 ---""")
         
@@ -517,6 +614,8 @@ Content: {content}
                 metadata.get("title") or
                 f"Meeting #{meeting.get('id', '')}")
         
+        logger.info(f"[FORMAT] Processing meeting: {name}")
+        
         date = (meeting.get("meeting_date") or 
                 metadata.get("meeting_date") or 
                 metadata.get("date") or "")
@@ -524,11 +623,30 @@ Content: {content}
         url = (meeting.get("meeting_url") or 
                metadata.get("meeting_url") or 
                metadata.get("url") or 
-               metadata.get("transcript_url") or "")
+               metadata.get("transcript_url") or None)
+        
+        # Validate URL
+        if url and not ("http://" in str(url) or "https://" in str(url)):
+            url = None
         
         participants = (meeting.get("speakers") or 
                        metadata.get("participants") or 
                        metadata.get("speakers") or "")
+        
+        # Extract textual metadata for context
+        ignored_keys = [
+            "chunk_index", "total_chunks", "upload_date", "created_at", "source", 
+            "name", "title", "filename", "date", "url", "participants", "speakers", 
+            "meeting_title", "meeting_date", "meeting_url", "id", "uuid", "loc", 
+            "text", "content", "transcript_url"
+        ]
+        
+        meta_str_parts = []
+        for k, v in metadata.items():
+            if k not in ignored_keys and v is not None and str(v).strip():
+                meta_str_parts.append(f"{k}: {v}")
+        
+        meta_context = "\n".join(meta_str_parts)
         
         context_parts.append(f"""
 Source: {name}
@@ -536,6 +654,7 @@ Type: Meeting
 Date: {date}
 URL: {url}
 Participants: {participants}
+{meta_context}
 Content: {content}
 ---""")
         
@@ -550,7 +669,29 @@ Content: {content}
         ))
     
     sources.sort(key=lambda x: x.similarity, reverse=True)
-    return "\n".join(context_parts), sources[:5]
+    
+    # Sort by date (most recent first) if dates are available, otherwise by similarity
+    def sort_key(source):
+        # Try to parse date
+        if source.date:
+            try:
+                # Handle various date formats
+                date_str = str(source.date).split('T')[0]  # Remove time if present
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                # Return tuple: (has_date, date, similarity) - sort by date desc, then similarity desc
+                return (True, date_obj, source.similarity)
+            except:
+                pass
+        # No valid date - sort by similarity only
+        return (False, datetime.min, source.similarity)
+    
+    sources.sort(key=sort_key, reverse=True)
+    
+    # Return top 8 sources for better coverage
+    top_sources = sources[:8]
+    logger.info(f"[FORMAT] Returning {len(top_sources)} sources out of {len(sources)} total")
+    logger.info(f"[FORMAT] Top 3 sources by date: {[(s.name, s.date) for s in top_sources[:3]]}")
+    return "\n".join(context_parts), top_sources
 
 @app.get("/health")
 async def health_check():
@@ -601,6 +742,9 @@ async def chat(request: ChatRequest):
         history_text = format_memory_for_prompt(memory)
         logger.info(f"[CHAT] Memory size: {len(memory.load_memory_variables({}).get('chat_history', []))} messages")
         
+        # Prepare current time string
+        current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         # Classify query type
         query_type = classify_query_type(request.query)
         
@@ -611,6 +755,7 @@ async def chat(request: ChatRequest):
             chain = prompt | llm | StrOutputParser()
             answer = chain.invoke({
                 "bot_name": BOT_NAME,
+                "current_time": current_time_str,
                 "chat_history": history_text,
                 "query": request.query
             })
@@ -632,7 +777,7 @@ async def chat(request: ChatRequest):
         logger.info(f"[CHAT] Knowledge query - initiating multi-query search")
         
         # 1. Generate Query Variations
-        variations = generate_query_variations(request.query)
+        variations = generate_query_variations(request.query, history_text)
         all_queries = [request.query] + variations
         
         # 2. Search for all queries and aggregate results
@@ -686,6 +831,7 @@ async def chat(request: ChatRequest):
         
         answer = chain.invoke({
             "bot_name": BOT_NAME,
+            "current_time": current_time_str,
             "chat_history": history_text,
             "context": context if context.strip() else "No relevant information found in the knowledge base.",
             "recent_meetings": recent_meetings_text,
@@ -694,6 +840,12 @@ async def chat(request: ChatRequest):
         
         logger.info(f"[LLM] Response generated ({len(answer)} chars)")
         logger.info(f"[LLM] Answer preview: '{answer[:100]}...'")
+
+        # Citation verification - check if response has proper source citations
+        if sources and len(sources) > 0:
+            has_sources_section = "Sources" in answer or "**1." in answer
+            if not has_sources_section:
+                logger.warning(f"[CITATION-CHECK] Response has {len(sources)} sources but no citations in answer")
 
         # Save to memory
         memory.save_context(
